@@ -442,6 +442,29 @@ body {
   .two     { grid-template-columns: 1fr; }
   .header h1 { font-size: 21px; }
 }
+
+.voz-wrap{position:relative;}
+.btn-voz{
+  display:none; /* mostrado via JS apenas se suportado */
+  align-items:center;gap:6px;
+  padding:8px 14px;border-radius:8px;
+  background:var(--verde-bg);border:1.5px solid var(--verde-border);
+  color:var(--verde);font-family:'Source Sans 3',sans-serif;
+  font-size:13px;font-weight:600;cursor:pointer;
+  margin-top:6px;transition:all 0.2s;
+}
+.btn-voz:hover{background:var(--verde-border);}
+.btn-voz.gravando{
+  background:#fee2e2;border-color:#fca5a5;color:#dc2626;
+  animation:pulsar 1s ease-in-out infinite;
+}
+@keyframes pulsar{0%,100%{opacity:1}50%{opacity:0.6}}
+.voz-status{
+  font-size:11px;color:var(--texto-3);margin-top:4px;
+  min-height:16px;display:none;
+}
+.voz-status.visivel{display:block;}
+
 </style>
 </head>
 <body>
@@ -454,7 +477,7 @@ body {
     <span id="badge-txt">Carregando…</span>
   </div>
   <h1>Ficha de<br>Pré-Atendimento</h1>
-  <p class="header-sub">Estas informações chegam diretamente ao Dr. Lucas antes da sua consulta.</p>
+  <p class="header-sub" style="font-size:14px;color:rgba(255,255,255,.75)">Estas informações chegam diretamente ao Dr. Lucas antes da sua consulta.</p>
 </header>
 
 <!-- PROGRESSO -->
@@ -499,6 +522,12 @@ body {
         <span class="err-msg" id="e-wa">Informe seu WhatsApp.</span>
       </div>
 
+
+      <div class="field" id="email-fld">
+        <label for="email">E-mail <span style="font-size:11px;color:var(--texto-3)">(para envio de documentos após a consulta)</span></label>
+        <input type="email" id="email" name="email" autocomplete="email" placeholder="seu@email.com">
+      </div>
+
       <!-- Clínica — sempre readonly -->
       <div class="field-pre" id="clinica-pre">
         <div class="field-pre-ico">🏥</div>
@@ -532,12 +561,19 @@ body {
       <div class="field">
         <label for="qp">Qual é sua queixa principal? <span class="req">*</span></label>
         <p class="hint">Descreva o sintoma mais importante e há quanto tempo está presente.</p>
-        <textarea id="qp" name="queixa_principal" rows="3" placeholder="Ex: Tosse seca há 3 semanas, pior à noite…"></textarea>
+        <textarea id="qp" name="queixa_principal" rows="5" style="resize:vertical" placeholder="Ex: Tosse seca há 3 semanas, pior à noite…"></textarea>
         <span class="err-msg" id="e-qp">Descreva o motivo da consulta.</span>
+
+          <div class="voz-wrap">
+            <button type="button" class="btn-voz" id="btn-voz-qp" onclick="toggleVoz('qp')">
+              🎙 Falar minha queixa
+            </button>
+            <div class="voz-status" id="status-voz-qp">Ouvindo... fale sua queixa principal</div>
+          </div>
       </div>
       <div class="field">
         <label for="qs">Tem outra queixa ou sintoma que gostaria de relatar?</label>
-        <textarea id="qs" name="queixa_secundaria" rows="2" placeholder="Opcional…"></textarea>
+        <textarea id="qs" name="queixa_secundaria" rows="3" style="resize:vertical" placeholder="Opcional…"></textarea>
       </div>
     </div>
   </div>
@@ -795,6 +831,8 @@ function coletar() {
     medicacoes:          document.getElementById('med').value.trim(),
     alergias:            document.getElementById('alg').value.trim(),
     autorizacao:         document.querySelector('input[name=autorizacao]:checked')?.value || '',
+    email:               document.getElementById('email').value.trim(),
+    tipo_consulta:       document.querySelector('input[name=tipo_consulta]:checked')?.value || '',
     fonte:               'formulario_web',
   };
 }
@@ -869,6 +907,122 @@ document.addEventListener('change', function(e) {
   }
 });
 </script>
+
+
+<script>
+// ── TRANSCRIÇÃO POR VOZ ──────────────────────────────────────────
+// Só ativa se o navegador suportar (não aparece em iPhone Safari)
+var reconhecimento = null;
+var vozAtiva = null;
+var textoAcumulado = {}; // guarda texto anterior por campo
+
+function iniciarVoz() {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+
+  // Mostra os botões de voz
+  document.querySelectorAll('.btn-voz').forEach(function(b){
+    b.style.display = 'inline-flex';
+  });
+
+  reconhecimento = new SR();
+  reconhecimento.lang = 'pt-BR';
+  reconhecimento.continuous = true;
+  reconhecimento.interimResults = true;
+
+  reconhecimento.onresult = function(e) {
+    var campo = document.getElementById(vozAtiva === 'qp' ? 'qp' : 'qs');
+    if (!campo) return;
+
+    var textoFinal = textoAcumulado[vozAtiva] || '';
+    var textoAtual = '';
+
+    for (var i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        // Resultado final — acumula
+        textoFinal += e.results[i][0].transcript + ' ';
+        textoAcumulado[vozAtiva] = textoFinal;
+      } else {
+        // Resultado parcial — mostra em tempo real
+        textoAtual = e.results[i][0].transcript;
+      }
+    }
+
+    // Exibe: texto acumulado + o que está sendo dito agora
+    campo.value = textoFinal + textoAtual;
+
+    // Scroll automático para o final do textarea
+    campo.scrollTop = campo.scrollHeight;
+  };
+
+  reconhecimento.onerror = function(e) {
+    pararVoz();
+    var status = document.getElementById('status-voz-' + vozAtiva);
+    if (status) {
+      status.textContent = 'Não foi possível captar. Tente novamente.';
+      status.classList.add('visivel');
+      setTimeout(function(){ status.classList.remove('visivel'); }, 3000);
+    }
+  };
+
+  reconhecimento.onend = function() {
+    // Reinicia automaticamente se ainda estiver gravando
+    // (alguns navegadores encerram após silêncio)
+    if (vozAtiva) {
+      try { reconhecimento.start(); } catch(e) {}
+    }
+  };
+}
+
+function toggleVoz(campo) {
+  if (vozAtiva === campo) {
+    pararVoz();
+  } else {
+    if (vozAtiva) pararVoz();
+    iniciarGravacao(campo);
+  }
+}
+
+function iniciarGravacao(campo) {
+  if (!reconhecimento) return;
+  vozAtiva = campo;
+
+  // Preserva o que já foi digitado manualmente
+  var campEl = document.getElementById(campo === 'qp' ? 'qp' : 'qs');
+  if (campEl && campEl.value && !textoAcumulado[campo]) {
+    textoAcumulado[campo] = campEl.value + ' ';
+  }
+
+  var btn = document.getElementById('btn-voz-' + campo);
+  var status = document.getElementById('status-voz-' + campo);
+  if (btn) { btn.classList.add('gravando'); btn.textContent = '⏹ Parar gravação'; }
+  if (status) status.classList.add('visivel');
+
+  try { reconhecimento.start(); } catch(e) {}
+}
+
+function pararVoz() {
+  if (!reconhecimento || !vozAtiva) return;
+  try { reconhecimento.stop(); } catch(e) {}
+
+  var btn = document.getElementById('btn-voz-' + vozAtiva);
+  var status = document.getElementById('status-voz-' + vozAtiva);
+  if (btn) {
+    btn.classList.remove('gravando');
+    btn.innerHTML = vozAtiva === 'qp' ? '🎙 Falar minha queixa' : '🎙 Falar queixa adicional';
+  }
+  if (status) status.classList.remove('visivel');
+  vozAtiva = null;
+}
+
+// Limpa acumulado quando o campo é editado manualmente
+document.addEventListener('input', function(e) {
+  if (e.target && (e.target.id === 'qp' || e.target.id === 'qs')) {
+    if (!vozAtiva) textoAcumulado[e.target.id] = e.target.value;
+  }
+});
+
+document.addEventListener('DOMContentLoaded', iniciarVoz);</script>
 
 </body>
 </html>
