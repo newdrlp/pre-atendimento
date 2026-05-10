@@ -934,24 +934,22 @@ function iniciarVoz() {
     var campo = document.getElementById(vozAtiva === 'qp' ? 'qp' : 'qs');
     if (!campo) return;
 
-    var textoFinal = textoAcumulado[vozAtiva] || '';
-    var textoAtual = '';
-
+    // Processa APENAS os resultados novos a partir de resultIndex
     for (var i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) {
-        // Resultado final — acumula
-        textoFinal += e.results[i][0].transcript + ' ';
-        textoAcumulado[vozAtiva] = textoFinal;
-      } else {
-        // Resultado parcial — mostra em tempo real
-        textoAtual = e.results[i][0].transcript;
+        // Acumula só o novo trecho final
+        textoAcumulado[vozAtiva] = (textoAcumulado[vozAtiva] || '') + e.results[i][0].transcript + ' ';
       }
     }
 
-    // Exibe: texto acumulado + o que está sendo dito agora
-    campo.value = textoFinal + textoAtual;
+    // Resultado parcial — último resultado não final
+    var parcial = '';
+    if (e.results.length > 0 && !e.results[e.results.length-1].isFinal) {
+      parcial = e.results[e.results.length-1][0].transcript;
+    }
 
-    // Scroll automático para o final do textarea
+    // Exibe acumulado + parcial atual
+    campo.value = (textoAcumulado[vozAtiva] || '') + parcial;
     campo.scrollTop = campo.scrollHeight;
   };
 
@@ -966,10 +964,14 @@ function iniciarVoz() {
   };
 
   reconhecimento.onend = function() {
-    // Reinicia automaticamente se ainda estiver gravando
-    // (alguns navegadores encerram após silêncio)
+    // Reinicia só se ainda estiver gravando E com delay
+    // para evitar reprocessamento dos resultados anteriores
     if (vozAtiva) {
-      try { reconhecimento.start(); } catch(e) {}
+      setTimeout(function() {
+        if (vozAtiva) {
+          try { reconhecimento.start(); } catch(e) {}
+        }
+      }, 200);
     }
   };
 }
